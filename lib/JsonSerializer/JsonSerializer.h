@@ -7,7 +7,7 @@
 class JsonSerializer
 {
 public:
-    static String telemetry(const char *deviceId, const char *deviceName, const SensorData &data);
+    static String telemetry(const String &deviceId, const char *deviceName, const String &macAddress, const SensorData &data);
 };
 
 #endif
