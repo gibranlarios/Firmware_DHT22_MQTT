@@ -28,4 +28,9 @@
 // Publishing interval in milliseconds.
 #define TELEMETRY_INTERVAL_MS 10000UL
 
+// Connection recovery and in-memory event buffering.
+#define WIFI_RECONNECT_INTERVAL_MS 10000UL
+#define MQTT_RECONNECT_INTERVAL_MS 5000UL
+#define EVENT_QUEUE_SIZE 10
+
 #endif

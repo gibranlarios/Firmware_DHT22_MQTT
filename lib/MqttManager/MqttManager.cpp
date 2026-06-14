@@ -4,19 +4,27 @@
 
 namespace
 {
-const unsigned long MQTT_RECONNECT_INTERVAL_MS = 5000UL;
 const char *STATUS_ONLINE = "online";
 const char *STATUS_OFFLINE = "offline";
 }
 
-MqttManager::MqttManager(const char *host, uint16_t port, const char *username, const char *password, const char *baseTopic)
+MqttManager::MqttManager(
+    const char *host,
+    uint16_t port,
+    const char *username,
+    const char *password,
+    const char *baseTopic,
+    unsigned long reconnectIntervalMs)
     : _mqttClient(_secureClient),
       _host(host),
       _port(port),
       _username(username),
       _password(password),
       _baseTopic(baseTopic),
-      _lastReconnectAttempt(0)
+      _lastReconnectAttempt(0),
+      _connectionCallback(nullptr),
+      _lastConnected(false),
+      _reconnectIntervalMs(reconnectIntervalMs)
 {
 }
 
@@ -25,22 +33,43 @@ bool MqttManager::begin()
     _secureClient.setInsecure();
     _mqttClient.setServer(_host, _port);
 
-    return connect();
+    const bool connected = connect();
+    _lastConnected = connected;
+    _lastReconnectAttempt = millis();
+    return connected;
 }
 
 void MqttManager::loop()
 {
-    if (_mqttClient.connected())
+    if (WiFi.status() != WL_CONNECTED)
     {
-        _mqttClient.loop();
+        if (_mqttClient.connected())
+        {
+            _mqttClient.disconnect();
+        }
+
+        updateConnectionState(false);
         return;
     }
 
+    if (_mqttClient.connected())
+    {
+        _mqttClient.loop();
+        updateConnectionState(_mqttClient.connected());
+
+        if (_mqttClient.connected())
+        {
+            return;
+        }
+    }
+
+    updateConnectionState(false);
+
     const unsigned long now = millis();
-    if (now - _lastReconnectAttempt >= MQTT_RECONNECT_INTERVAL_MS)
+    if (now - _lastReconnectAttempt >= _reconnectIntervalMs)
     {
         _lastReconnectAttempt = now;
-        connect();
+        updateConnectionState(connect());
     }
 }
 
@@ -65,6 +94,11 @@ bool MqttManager::publish(const String &topic, const String &payload)
     Serial.println(topic);
 
     return sent;
+}
+
+void MqttManager::setConnectionCallback(MqttConnectionCallback callback)
+{
+    _connectionCallback = callback;
 }
 
 String MqttManager::telemetryTopic() const
@@ -134,4 +168,19 @@ String MqttManager::buildTopic(const char *suffix) const
     topic += "/";
     topic += suffix;
     return topic;
+}
+
+void MqttManager::updateConnectionState(bool connected)
+{
+    if (connected == _lastConnected)
+    {
+        return;
+    }
+
+    _lastConnected = connected;
+
+    if (_connectionCallback != nullptr)
+    {
+        _connectionCallback(connected);
+    }
 }

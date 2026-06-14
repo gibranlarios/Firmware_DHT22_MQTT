@@ -3,17 +3,26 @@
 #include <AppWifiManager.h>
 #include <Config.h>
 #include <DHTSensor.h>
+#include <EventQueue.h>
 #include <JsonSerializer.h>
 #include <MqttManager.h>
 #include <WiFi.h>
 
-AppWifiManager wifi;
+AppWifiManager wifi(WIFI_RECONNECT_INTERVAL_MS);
 DHTSensor sensor(DHT_PIN);
-MqttManager mqtt(MQTT_HOST, MQTT_PORT, MQTT_USERNAME, MQTT_PASSWORD, MQTT_BASE_TOPIC);
+MqttManager mqtt(
+    MQTT_HOST,
+    MQTT_PORT,
+    MQTT_USERNAME,
+    MQTT_PASSWORD,
+    MQTT_BASE_TOPIC,
+    MQTT_RECONNECT_INTERVAL_MS);
+EventQueue<EVENT_QUEUE_SIZE> eventQueue;
 
 unsigned long lastTelemetryAt = 0;
 String macAddress;
 String deviceId;
+String eventsTopic;
 
 String buildDeviceId(const String &mac)
 {
@@ -21,6 +30,42 @@ String buildDeviceId(const String &mac)
     id.replace(":", "");
     id.toUpperCase();
     return id;
+}
+
+void handleWifiConnection(bool connected)
+{
+    eventQueue.enqueue(
+        connected ? "wifi_reconnected" : "wifi_disconnected",
+        connected ? "WiFi connection restored" : "WiFi connection lost",
+        millis());
+}
+
+void handleMqttConnection(bool connected)
+{
+    eventQueue.enqueue(
+        connected ? "mqtt_reconnected" : "mqtt_disconnected",
+        connected ? "MQTT connection restored" : "MQTT connection lost",
+        millis());
+}
+
+void publishPendingEvent()
+{
+    if (!mqtt.isConnected() || eventQueue.isEmpty())
+    {
+        return;
+    }
+
+    DeviceEvent event;
+    if (!eventQueue.peek(event))
+    {
+        return;
+    }
+
+    const String payload = JsonSerializer::event(deviceId, DEVICE_NAME, macAddress, event);
+    if (mqtt.publish(eventsTopic, payload))
+    {
+        eventQueue.pop();
+    }
 }
 
 void setup()
@@ -32,10 +77,13 @@ void setup()
     Serial.println("[App] Starting ESP32 IoT base...");
 
     sensor.begin();
+    wifi.setConnectionCallback(handleWifiConnection);
+    mqtt.setConnectionCallback(handleMqttConnection);
     wifi.begin();
 
     macAddress = WiFi.macAddress();
     deviceId = buildDeviceId(macAddress);
+    eventsTopic = String("devices/") + deviceId + "/events";
 
     Serial.print("Device Name: ");
     Serial.println(DEVICE_NAME);
@@ -51,6 +99,7 @@ void loop()
 {
     wifi.loop();
     mqtt.loop();
+    publishPendingEvent();
 
     const unsigned long now = millis();
     if (now - lastTelemetryAt < TELEMETRY_INTERVAL_MS)
