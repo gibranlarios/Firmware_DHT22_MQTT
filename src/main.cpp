@@ -22,7 +22,10 @@ EventQueue<EVENT_QUEUE_SIZE> eventQueue;
 unsigned long lastTelemetryAt = 0;
 String macAddress;
 String deviceId;
+String telemetryTopic;
 String eventsTopic;
+bool sensorHealthy = true;
+bool telemetryPublishHealthy = true;
 
 String buildDeviceId(const String &mac)
 {
@@ -46,6 +49,37 @@ void handleMqttConnection(bool connected)
         connected ? "mqtt_reconnected" : "mqtt_disconnected",
         connected ? "MQTT connection restored" : "MQTT connection lost",
         millis());
+}
+
+void enqueueEvent(const String &eventType, const String &message)
+{
+    eventQueue.enqueue(eventType, message, millis());
+}
+
+void updateSensorHealth(bool healthy)
+{
+    if (healthy == sensorHealthy)
+    {
+        return;
+    }
+
+    sensorHealthy = healthy;
+    enqueueEvent(
+        healthy ? "sensor_recovered" : "sensor_failed",
+        healthy ? "DHT22 sensor recovered" : "DHT22 sensor read failed");
+}
+
+void updateTelemetryPublishHealth(bool healthy)
+{
+    if (healthy == telemetryPublishHealthy)
+    {
+        return;
+    }
+
+    telemetryPublishHealthy = healthy;
+    enqueueEvent(
+        healthy ? "telemetry_publish_recovered" : "telemetry_publish_failed",
+        healthy ? "Telemetry publish recovered" : "Telemetry publish failed");
 }
 
 void publishPendingEvent()
@@ -83,6 +117,7 @@ void setup()
 
     macAddress = WiFi.macAddress();
     deviceId = buildDeviceId(macAddress);
+    telemetryTopic = String("devices/") + deviceId + "/telemetry";
     eventsTopic = String("devices/") + deviceId + "/events";
 
     Serial.print("Device Name: ");
@@ -125,9 +160,12 @@ void loop()
     if (!sensor.read(data))
     {
         Serial.println("[DHT22] Failed to read sensor data.");
+        updateSensorHealth(false);
         return;
     }
 
+    updateSensorHealth(true);
+
     const String payload = JsonSerializer::telemetry(deviceId, DEVICE_NAME, macAddress, data);
-    mqtt.publish(mqtt.telemetryTopic(), payload);
+    updateTelemetryPublishHealth(mqtt.publish(telemetryTopic, payload));
 }

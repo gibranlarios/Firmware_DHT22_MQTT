@@ -93,6 +93,13 @@ bool MqttManager::publish(const String &topic, const String &payload)
     Serial.print(" -> ");
     Serial.println(topic);
 
+    if (!sent)
+    {
+        _mqttClient.disconnect();
+        _lastReconnectAttempt = millis();
+        updateConnectionState(false);
+    }
+
     return sent;
 }
 
